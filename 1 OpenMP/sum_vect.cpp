@@ -102,7 +102,9 @@ int main(int argc, char *argv[])
     cout << "Sum calculated. Elapsed time: " << elapsed << " seconds" << endl;
 
     if (debug)
+    {
         cout << "The sum is: " << sum << endl;
+    }
 
     delete[] x;
     return 0;
