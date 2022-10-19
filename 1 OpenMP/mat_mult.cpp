@@ -69,7 +69,7 @@ void mat_mult(T A[], T B[], T C[], int m, int n, int k, int thread_count)
 double *generate_matrix(int m, int n)
 {
     default_random_engine generator;
-    uniform_real_distribution<double> distribution{0.0, 1.0};
+    uniform_real_distribution<double> distribution{ 0.0, 1.0 };
 
     double *A = new double[m * n];
     for (int i = 0; i < m * n; i++)
