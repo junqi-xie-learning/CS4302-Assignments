@@ -10,5 +10,9 @@ random_generator:
 	g++ -g -Wall -fopenmp -o random_generator.out random_generator.cpp
 	./random_generator.out 2
 
+consumer_producer:
+	g++ -g -Wall -fopenmp -o consumer_producer.out consumer_producer.cpp
+	./consumer_producer.out 10 10 5
+
 clean:
 	rm *.out
