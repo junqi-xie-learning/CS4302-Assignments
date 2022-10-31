@@ -7,7 +7,8 @@ If you found any mistakes in the solutions, please create an issue or contact me
 
 ## Environment Setup
 
-* This repository was tested with GCC Version 11.2.0 on Ubuntu 22.04.
+* Homework 1 was tested with GCC Version 11.2.0 on Ubuntu 22.04.
+* Homework 2 was tested with CUDA Toolkit 12.0 on Ubuntu 22.04.
 
 ## License
 
