@@ -3,8 +3,13 @@
  *
  *
  * Idea:
- *     Computes a parallel product of matrices with CUDA.  Each thread will be
- *     responsible for calculating one element of the product matrix.
+ *     Computes a parallel product of matrices with CUDA.  If not `tiled`, each
+ *     thread will be responsible for calculating one element of the product 
+ *     matrix.  If `tiled`, each thread will be responsible for loading part of
+ *     the matrices into shared memory and then calculating part of the product
+ *     matrix.
+ *     Note that the TILE_WIDTH should be tuned according to the workload and
+ *     the GPU architecture to achieve the best performance.
  *
  * Compile:
  *     nvcc -o mat_mult.out mat_mult.cu
@@ -25,6 +30,8 @@
 using namespace std;
 
 bool debug = false;
+bool tiled = true;
+const int TILE_WIDTH = 16;
 
 /*------------------------------------------------------------------
  * Function:  mat_mult_kernel
@@ -81,6 +88,89 @@ void mat_mult(T A[], T B[], T C[], int m, int n, int k)
     dim3 dimGrid(1, 1);
     dim3 dimBlock(m, k);
     mat_mult_kernel<<<dimGrid, dimBlock>>>(A_d, B_d, C_d, m, n, k);
+
+    // Transfer C from device to host
+    cudaMemcpy(C, C_d, C_size, cudaMemcpyDeviceToHost);
+    // Free device matrices
+    cudaFree(A_d);
+    cudaFree(B_d);
+    cudaFree(C_d);
+}
+
+/*------------------------------------------------------------------
+ * Function:  mat_mult_tiled_kernel
+ * Purpose:   Kernel function to compute an element in the matrix multiplication
+ *            with optimization of tiling and utilization of shared memory.
+ *            Note that `A_d`, `B_d`, and `C_d` are in the device memory.
+ * In args:   A_d, B_d, m, n, k
+ * Out arg:   C_d[row * k + col]
+ */
+template <typename T>
+__global__ void mat_mult_tiled_kernel(T A_d[], T B_d[], T C_d[], int m, int n, int k)
+{
+    __shared__ T A_shared[TILE_WIDTH][TILE_WIDTH];
+    __shared__ T B_shared[TILE_WIDTH][TILE_WIDTH];
+
+    // Identify the row and column of the working element in C
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int row = blockIdx.y * TILE_WIDTH + ty;
+    int col = blockIdx.x * TILE_WIDTH + tx;
+
+    // Loop over the A and B tiles required to compute P element
+    T value{ };
+    for (int i = 0; i < n; i += TILE_WIDTH)
+    {
+        // Collaborative loading of M and N tiles into shared memory
+        if ((row < m) && (i + tx) < n)
+        {
+            A_shared[ty][tx] = A_d[row * n + i + tx];
+        }
+        if ((i + ty) < n && (col < k))
+        {
+            B_shared[ty][tx] = B_d[(i + ty) * k + col];
+        }
+        __syncthreads();
+
+        for (int ii = 0; ii < TILE_WIDTH; ++ii)
+        {
+            value += A_shared[ty][ii] * B_shared[ii][tx];
+        }
+        __syncthreads();
+    }
+
+    if ((row < m) && (col < k))
+    {
+        C_d[row * k + col] = value;
+    }
+}
+
+/*------------------------------------------------------------------
+ * Function:  mat_mult_tiled
+ * Purpose:   Wrapper function of matrix multiplication with optimization of
+ *            tiling and utilization of shared memory.
+ * In args:   A, B, m, n, k
+ * Out arg:   C
+ */
+template <typename T>
+void mat_mult_tiled(T A[], T B[], T C[], int m, int n, int k)
+{
+    int A_size = m * n * sizeof(T), B_size = n * k * sizeof(T),
+        C_size = m * k * sizeof(T);
+    T *A_d, *B_d, *C_d;
+
+    // Transfer A and B to device memory
+    cudaMalloc((void **)&A_d, A_size);
+    cudaMemcpy(A_d, A, A_size, cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&B_d, B_size);
+    cudaMemcpy(B_d, B, B_size, cudaMemcpyHostToDevice);
+
+    // Allocate C in device memory
+    cudaMalloc((void **)&C_d, C_size);
+
+    // Kernel Invocation
+    dim3 dimGrid(TILE_WIDTH, TILE_WIDTH);
+    dim3 dimBlock(ceil(m / (double)TILE_WIDTH), ceil(k / (double)TILE_WIDTH));
+    mat_mult_tiled_kernel<<<dimGrid, dimBlock>>>(A_d, B_d, C_d, m, n, k);
 
     // Transfer C from device to host
     cudaMemcpy(C, C_d, C_size, cudaMemcpyDeviceToHost);
@@ -169,7 +259,14 @@ int main(int argc, char *argv[])
     double *C = new double[m * k];
     cudaEventRecord(start);
 
-    mat_mult(A, B, C, m, n, k);
+    if (tiled)
+    {
+        mat_mult_tiled(A, B, C, m, n, k);
+    }
+    else
+    {
+        mat_mult(A, B, C, m, n, k);
+    }
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);

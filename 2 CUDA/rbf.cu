@@ -3,8 +3,13 @@
  *
  *
  * Idea:
- *     Computes a parallel rbf kernel of matrices with CUDA.  Each thread will
- *     be responsible for calculating one element of the RBF kernel matrix.
+ *     Computes a parallel rbf kernel of matrices with CUDA.  If not `tiled`,
+ *     each thread will be responsible for calculating one element of the RBF
+ *     kernel matrix.  If `tiled`, each thread will be responsible for loading
+ *     part of the matrices into shared memory and then calculating part of the
+ *     RBF kernel matrix.
+ *     Note that the TILE_WIDTH should be tuned according to the workload and
+ *     the GPU architecture to achieve the best performance.
  *
  * Compile:
  *     nvcc -o rbf.out rbf.cu
@@ -25,6 +30,8 @@
 using namespace std;
 
 bool debug = false;
+bool tiled = true;
+const int TILE_WIDTH = 16;
 
 /*------------------------------------------------------------------
  * Function:  rbf_kernel
@@ -82,6 +89,91 @@ void rbf(T A[], T B[], T C[], T sigma, int dimension, int m, int n)
     dim3 dimGrid(1, 1);
     dim3 dimBlock(m, n);
     rbf_kernel<<<dimGrid, dimBlock>>>(A_d, B_d, C_d, sigma, dimension, m, n);
+
+    // Transfer C from device to host
+    cudaMemcpy(C, C_d, C_size, cudaMemcpyDeviceToHost);
+    // Free device matrices
+    cudaFree(A_d);
+    cudaFree(B_d);
+    cudaFree(C_d);
+}
+
+/*------------------------------------------------------------------
+ * Function:  rbf_tiled_kernel
+ * Purpose:   Kernel function to compute an element in the RBF kernel with
+ *            optimization of tiling and utilization of shared memory.
+ *            Note that `A_d`, `B_d`, and `C_d` are in the device memory.
+ * In args:   A_d, B_d, sigma, dimension, m, n
+ * Out arg:   C_d[row * k + col]
+ */
+template <typename T>
+__global__ void rbf_tiled_kernel(T A_d[], T B_d[], T C_d[], T sigma, int dimension, int m, int n)
+{
+    __shared__ T A_shared[TILE_WIDTH][TILE_WIDTH];
+    __shared__ T B_shared[TILE_WIDTH][TILE_WIDTH];
+
+    // Identify the row and column of the working element in C
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int row = blockIdx.y * TILE_WIDTH + ty;
+    int col = blockIdx.x * TILE_WIDTH + tx;
+
+    // Loop over the A and B tiles required to compute P element
+    T dist{ };
+    for (int i = 0; i < dimension; i += TILE_WIDTH)
+    {
+        // Collaborative loading of M and N tiles into shared memory
+        if ((row < m) && (i + tx) < dimension)
+        {
+            A_shared[ty][tx] = A_d[row * dimension + i + tx];
+        }
+        if ((i + ty) < dimension && (col < n))
+        {
+            B_shared[ty][tx] = B_d[(i + ty) * n + col];
+        }
+        __syncthreads();
+
+        for (int ii = 0; ii < TILE_WIDTH; ++ii)
+        {
+            T diff = A_shared[ty][ii] - B_shared[ii][tx];
+            dist += diff * diff;
+        }
+        __syncthreads();
+    }
+
+    if ((row < m) && (col < n))
+    {
+        C_d[row * n + col] = exp(-dist / (2 * sigma * sigma));
+    }
+}
+
+/*------------------------------------------------------------------
+ * Function:  rbf_tiled
+ * Purpose:   Wrapper function of RBF kernel with optimization of tiling and
+ *            utilization of shared memory.
+ * In args:   A, B, sigma, dimension, m, n
+ * Out arg:   C
+ */
+template <typename T>
+void rbf_tiled(T A[], T B[], T C[], T sigma, int dimension, int m, int n)
+{
+    int A_size = m * dimension * sizeof(T), B_size = n * dimension * sizeof(T),
+        C_size = m * n * sizeof(T);
+    T *A_d, *B_d, *C_d;
+
+    // Transfer A and B to device memory
+    cudaMalloc((void **)&A_d, A_size);
+    cudaMemcpy(A_d, A, A_size, cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&B_d, B_size);
+    cudaMemcpy(B_d, B, B_size, cudaMemcpyHostToDevice);
+
+    // Allocate C in device memory
+    cudaMalloc((void **)&C_d, C_size);
+
+    // Kernel Invocation
+    dim3 dimGrid(TILE_WIDTH, TILE_WIDTH);
+    dim3 dimBlock(ceil(m / (double)TILE_WIDTH), ceil(n / (double)TILE_WIDTH));
+    rbf_tiled_kernel<<<dimGrid, dimBlock>>>(A_d, B_d, C_d, sigma, dimension, m, n);
 
     // Transfer C from device to host
     cudaMemcpy(C, C_d, C_size, cudaMemcpyDeviceToHost);
@@ -171,7 +263,14 @@ int main(int argc, char *argv[])
     double *C = new double[m * n];
     cudaEventRecord(start);
 
-    rbf(A, B, C, sigma, dimension, m, n);
+    if (tiled)
+    {
+        rbf_tiled(A, B, C, sigma, dimension, m, n);
+    }
+    else
+    {
+        rbf(A, B, C, sigma, dimension, m, n);
+    }
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
