@@ -1,18 +1,68 @@
 #include "tensor_core.h"
 
 __half __float2half(const float &a) {
-  // Convert floating-point numbers
-  // to half-precision floating-point numbers
+  // Convert floating-point numbers to half-precision floating-point numbers
+  int a_rep = *(int *)&a;
+  
+  int sign = (a_rep >> 31) & 0x1;
+  int exp = ((a_rep >> 23) & 0xff) - 127;
+  int frac = a_rep & 0x7fffff;
+
+  if (exp > 15) { // Infinity
+    exp = 16;
+    frac = 0;
+  } else if (exp < -15) { // Denormalized
+    exp = -15;
+    frac = 0;
+  }
+
+  if (frac >> 12 & 0x1) { // Rounding to the nearest integer
+    frac += 0x2000;
+  }
+
+  unsigned short x = (sign << 15) | ((exp + 15) << 10) | (frac >> 13);
+  return __half{ x };
 }
 
 float __half2float(const __half &a) {
-  // Convert half-precision floating-point numbers
-  // to  floating-point numbers
+  // Convert half-precision floating-point numbers to floating-point numbers
+  int sign = (a.__x >> 15) & 0x1;
+  int exp = ((a.__x >> 10) & 0x1f) - 15;
+  int frac = a.__x & 0x3ff;
+
+  if (exp == 16) { // Infinity
+    exp = 128;
+  } else if (exp == -15 && frac == 0) { // Zero
+    exp = -127;
+  }
+
+  int float_rep = (sign << 31) | ((exp + 127) << 23) | (frac << 13);
+  return *(float *)&float_rep;
 }
 
 float operator*(const __half &lh, const __half &rh) {
-  // Overloaded half-precision
-  // floating-point number multiplication
+  // Overloaded half-precision floating-point number multiplication
+  int lh_sign = (lh.__x >> 15) & 0x1, rh_sign = (rh.__x >> 15) & 0x1;
+  int lh_exp = ((lh.__x >> 10) & 0x1f) - 15, rh_exp = ((rh.__x >> 10) & 0x1f) - 15;
+  int lh_frac = lh.__x & 0x3ff, rh_frac = rh.__x & 0x3ff;
+
+  int sign = lh_sign ^ rh_sign;
+  if (lh_exp == -15 && lh_frac == 0 || rh_exp == -15 && rh_frac == 0) { // Zero
+    return 0;
+  } else if (lh_exp == 16 || rh_exp == 16) { // Infinity
+    return (sign << 31) | (0x7f800000);
+  }
+
+  int exp = lh_exp + rh_exp;
+  int frac = ((lh_frac + 0x400) * (rh_frac + 0x400)) << 3;
+
+  if (frac >> 24) {
+    frac >>= 1;
+    exp++;
+  }
+
+  int float_rep = (sign << 31) | ((exp + 127) << 23) | (frac & 0x7fffff);
+  return *(float *)&float_rep;
 }
 
 GPU::GPU() {

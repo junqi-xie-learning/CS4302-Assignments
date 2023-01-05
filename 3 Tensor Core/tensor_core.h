@@ -21,11 +21,8 @@ struct dim3 {
 };
 
 struct __half {
- protected:
   unsigned short __x;
-
- public:
-  __half() = default;
+  __half(unsigned short x = 0) : __x{ x } { }
 };
 
 extern __half __float2half(const float &a);
