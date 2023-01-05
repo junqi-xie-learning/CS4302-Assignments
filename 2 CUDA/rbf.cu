@@ -186,14 +186,14 @@ void rbf_tiled(T A[], T B[], T C[], T sigma, int dimension, int m, int n)
 /*------------------------------------------------------------------
  * Function: generate_matrix
  * Purpose:  Use the random number generator random to generate
- *           the entries in `A` in [0, 0]
+ *           the entries in `A` in [0.0, 1.0]
  * In arg:   m, n
  * Out arg:  A
  */
 double *generate_matrix(int m, int n)
 {
     default_random_engine generator;
-    uniform_real_distribution<double> distribution{0, 0};
+    uniform_real_distribution<double> distribution{ 0.0, 1.0 };
 
     double *A = new double[m * n];
     for (int i = 0; i < m * n; i++)
