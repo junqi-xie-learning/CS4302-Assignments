@@ -116,7 +116,7 @@ __global__ void mat_mult_tiled_kernel(T A_d[], T B_d[], T C_d[], int m, int n, i
     int row = blockIdx.y * TILE_WIDTH + ty;
     int col = blockIdx.x * TILE_WIDTH + tx;
 
-    // Loop over the A and B tiles required to compute P element
+    // Loop over the A and B tiles required to compute C element
     T value{ };
     for (int i = 0; i < n; i += TILE_WIDTH)
     {
@@ -183,14 +183,14 @@ void mat_mult_tiled(T A[], T B[], T C[], int m, int n, int k)
 /*------------------------------------------------------------------
  * Function: generate_matrix
  * Purpose:  Use the random number generator random to generate
- *           the entries in `A` in [0, 0]
+ *           the entries in `A` in [0.0, 1.0]
  * In arg:   m, n
  * Out arg:  A
  */
 double *generate_matrix(int m, int n)
 {
     default_random_engine generator;
-    uniform_real_distribution<double> distribution{0, 0};
+    uniform_real_distribution<double> distribution{ 0.0, 1.0 };
 
     double *A = new double[m * n];
     for (int i = 0; i < m * n; i++)
