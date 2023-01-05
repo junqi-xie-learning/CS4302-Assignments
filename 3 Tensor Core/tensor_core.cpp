@@ -490,3 +490,51 @@ void wmma_kernel(__half *a, __half *b, float *c, dim3 &gridDim,
   volta.SIM_STG_INSTR(64, 2, 0x90, 6); // STG.E.64.SYS [R2+0x90], R6 ;
   volta.SIM_EXIT_INSTR(); // EXIT ;
 }
+
+void gemm(__half *a, __half *b, float *c, int m, int n, int k) {
+  // host function gemm
+  GPU volta;
+  dim3 blockDim(WARP_SIZE, 1, 1), gridDim(1, 1, 1);
+
+  __half *d_a, *d_b;
+  float* d_c;
+  simMalloc((void**)(&d_a), sizeof(__half) * TILE_WIDTH * TILE_WIDTH, volta);
+  simMalloc((void**)(&d_b), sizeof(__half) * TILE_WIDTH * TILE_WIDTH, volta);
+  simMalloc((void**)(&d_c), sizeof(float) * TILE_WIDTH * TILE_WIDTH, volta);
+
+  int m_tile = ceil(m / (float)TILE_WIDTH), n_tile = ceil(n / (float)TILE_WIDTH),
+      k_tile = ceil(k / (float)TILE_WIDTH);
+
+  for (int i = 0; i < m_tile; i++) {
+    for (int j = 0; j < k_tile; j++) {
+      for (int l = 0; l < n_tile; l++) {
+        int m_ = min(TILE_WIDTH, m - i * TILE_WIDTH);
+        int k_ = min(TILE_WIDTH, k - j * TILE_WIDTH);
+        int n_ = min(TILE_WIDTH, n - l * TILE_WIDTH);
+
+        for (int ii = 0; ii < m_; ii++)
+        {
+          simMemcpy(&d_a[ii * TILE_WIDTH], &a[(i * TILE_WIDTH + ii) * n + l * TILE_WIDTH],
+                    sizeof(__half) * n_, MemcpyHostToDevice, volta);
+        }
+        for (int jj = 0; jj < k_; jj++)
+        {
+          simMemcpy(&d_b[jj * TILE_WIDTH], &b[(j * TILE_WIDTH + jj) * n + l * TILE_WIDTH],
+                    sizeof(__half) * n_, MemcpyHostToDevice, volta);
+        }
+        for (int ii = 0; ii < m_; ii++)
+        {
+          simMemcpy(&d_c[ii * TILE_WIDTH], &c[(i * TILE_WIDTH + ii) * k + j * TILE_WIDTH],
+                    sizeof(float) * k_, MemcpyHostToDevice, volta);
+        }
+        wmma_kernel(d_a, d_b, d_c, gridDim, blockDim, volta);
+        for (int ii = 0; ii < m_; ii++)
+        {
+          simMemcpy(&c[(i * TILE_WIDTH + ii) * k + j * TILE_WIDTH], &d_c[ii * TILE_WIDTH],
+                    sizeof(float) * k_, MemcpyDeviceToHost, volta);
+        }
+        memset(volta.memory_, 0, sizeof(unsigned) * TILE_WIDTH * TILE_WIDTH * 2);
+      }
+    }
+  }
+}

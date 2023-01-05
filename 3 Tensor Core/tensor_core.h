@@ -87,4 +87,6 @@ extern void simMemcpy(void *dst, void *src, size_t count,
 extern void wmma_kernel(__half *a, __half *b, float *c, dim3 &gridDim,
                         dim3 &blockDim, GPU &volta);
 
+extern void gemm(__half *a, __half *b, float *c, int m, int n, int k);
+
 #endif
